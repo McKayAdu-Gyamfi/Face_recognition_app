@@ -1,5 +1,8 @@
 PATH:
   DATASET_DIR: 'dataset/'
+  PROCESSED_DIR: 'dataset/processed/'
+  UPLOAD_DIR: 'dataset/uploads/'
+  EMBEDDINGS_CSV: 'dataset/embeddings.csv'
   PKL_PATH: 'dataset/database.pkl'
 
 INFO:

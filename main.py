@@ -190,35 +190,73 @@ elif choice == "Manage Dataset":
         
         # Process button
         if st.button("Process ZIP and Build Dataset"):
-            # Ensure dataset directory exists
-            os.makedirs(DATASET_DIR, exist_ok=True)
+            # Clean previous uploads
+            if os.path.exists(handler.upload_dir):
+                for item in os.listdir(handler.upload_dir):
+                    item_path = os.path.join(handler.upload_dir, item)
+                    if os.path.isfile(item_path):
+                        os.remove(item_path)
             
-            # Save and extract ZIP file
-            zip_path = os.path.join(DATASET_DIR, uploaded_zip.name)
+            # Ensure upload directory exists
+            os.makedirs(handler.upload_dir, exist_ok=True)
+            
+            # Save ZIP file to uploads directory
+            zip_path = os.path.join(handler.upload_dir, uploaded_zip.name)
             with open(zip_path, "wb") as f:
                 f.write(uploaded_zip.getbuffer())
             
+            st.write(f"ZIP file saved to: {zip_path}")
+            
+            # Extract ZIP file
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(DATASET_DIR)
+                extract_dir = os.path.join(handler.upload_dir, "extracted")
+                os.makedirs(extract_dir, exist_ok=True)
+                zip_ref.extractall(extract_dir)
             
             st.write("ZIP file extracted successfully.")
             
             # Display extracted folder structure
-            for root, dirs, files in os.walk(DATASET_DIR):
-                level = root.replace(DATASET_DIR, "").count(os.sep)
+            extracted_files = []
+            for root, dirs, files in os.walk(extract_dir):
+                level = root.replace(extract_dir, "").count(os.sep)
                 indent = " " * 4 * level
-                st.write(f"{indent}{os.path.basename(root)}/")
+                folder_name = os.path.basename(root)
+                if folder_name:  # Skip the empty string for the root directory
+                    st.write(f"{indent}{folder_name}/")
                 sub_indent = " " * 4 * (level + 1)
                 for file in files:
-                    st.write(f"{sub_indent}{file}")
+                    if file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                        extracted_files.append(os.path.join(root, file))
+                        st.write(f"{sub_indent}{file}")
             
             # Build dataset
-            with st.spinner("Processing faces and building embeddings..."):
-                handler.build_dataset()
-                # Refresh embeddings after building
-                dataset_embeddings = np.array([v['encoding'] for v in handler.dataset.values()]) if handler.dataset else np.array([])
+            with st.spinner(f"Processing {len(extracted_files)} images and building embeddings..."):
+                faces_processed = handler.build_dataset(scan_uploads=True)
+                # Refresh embeddings
+                dataset_embeddings = handler.load_embeddings()
             
-            st.success(f"Dataset built successfully with {len(handler.dataset)} face(s)")
+            # Show results
+            st.success(f"Dataset built successfully with {faces_processed} face(s)")
+            
+            # Show output directory structure
+            st.subheader("Output Directory Structure")
+            st.write(f"1. Original ZIP: `{zip_path}`")
+            st.write(f"2. Extracted Data: `{extract_dir}`")
+            st.write(f"3. Processed Faces: `{handler.processed_dir}`")
+            st.write(f"4. Embeddings CSV: `{handler.embeddings_csv}`")
+            
+            # Display CSV preview if it exists
+            if os.path.exists(handler.embeddings_csv):
+                try:
+                    df = pd.read_csv(handler.embeddings_csv)
+                    if 'embedding' in df.columns:
+                        # Truncate embedding column for display
+                        df_display = df.copy()
+                        df_display['embedding'] = df_display['embedding'].str[:20] + '...'
+                        st.write("CSV Preview:")
+                        st.dataframe(df_display)
+                except Exception as e:
+                    st.error(f"Error displaying CSV: {e}")
     
     # Option to clear dataset
     st.subheader("Manage Existing Dataset")
@@ -227,14 +265,25 @@ elif choice == "Manage Dataset":
     with col1:
         if st.button("View Dataset Files"):
             try:
-                files = os.listdir(DATASET_DIR)
-                image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                # Show processed files
+                processed_files = os.listdir(handler.processed_dir) if os.path.exists(handler.processed_dir) else []
+                image_files = [f for f in processed_files if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+                
                 if image_files:
-                    st.write(f"Found {len(image_files)} image(s):")
+                    st.write(f"Found {len(image_files)} processed image(s):")
                     for img_file in image_files:
                         st.write(f"- {img_file}")
                 else:
-                    st.info("No image files found in dataset directory.")
+                    st.info("No processed image files found.")
+                    
+                # Show CSV if it exists
+                if os.path.exists(handler.embeddings_csv):
+                    st.write(f"Embeddings CSV: {handler.embeddings_csv}")
+                    try:
+                        df = pd.read_csv(handler.embeddings_csv)
+                        st.write(f"CSV contains {len(df)} entries")
+                    except Exception as e:
+                        st.error(f"Error reading CSV: {e}")
             except Exception as e:
                 st.error(f"Error listing dataset files: {e}")
     
@@ -242,12 +291,7 @@ elif choice == "Manage Dataset":
         if st.button("Clear Dataset"):
             if st.session_state.get('confirm_clear', False):
                 try:
-                    # Remove all files in dataset directory
-                    if os.path.exists(DATASET_DIR):
-                        shutil.rmtree(DATASET_DIR)
-                        os.makedirs(DATASET_DIR, exist_ok=True)
-                    
-                    # Delete database file
+                    # Clean up using handler method
                     handler.delete_dataset()
                     dataset_embeddings = np.array([])
                     
